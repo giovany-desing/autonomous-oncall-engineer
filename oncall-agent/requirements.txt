@@ -1,0 +1,6 @@
+tree-sitter==0.23.2
+tree-sitter-language-pack==0.7.2
+langgraph==0.2.62
+langchain-core==0.3.28
+boto3==1.35.97
+pyyaml==6.0.2
