@@ -48,6 +48,11 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_iam_role_policy_attachment" "lambda_xray" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
 resource "aws_iam_role_policy" "lambda_s3_read" {
   name = "rag-demo-s3-read"
   role = aws_iam_role.lambda_role.id
@@ -62,10 +67,42 @@ resource "aws_iam_role_policy" "lambda_s3_read" {
   })
 }
 
+resource "null_resource" "install_dependencies" {
+  triggers = {
+    requirements_hash = filesha256("${path.module}/../lambda/requirements.txt")
+    handler_hash      = filesha256("${path.module}/../lambda/handler.py")
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      rm -rf ${path.module}/build/package
+      mkdir -p ${path.module}/build/package
+      cp ${path.module}/../lambda/handler.py ${path.module}/build/package/
+      pip install \
+        aws-xray-sdk==2.14.0 \
+        --no-deps \
+        --target ${path.module}/build/package \
+        --platform manylinux2014_aarch64 \
+        --python-version 3.12 \
+        --only-binary=:all: \
+        --upgrade
+      pip install \
+        wrapt \
+        --target ${path.module}/build/package \
+        --platform manylinux2014_aarch64 \
+        --python-version 3.12 \
+        --only-binary=:all: \
+        --upgrade
+    EOT
+  }
+}
+
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_file = "${path.module}/../lambda/handler.py"
+  source_dir  = "${path.module}/build/package"
   output_path = "${path.module}/build/handler.zip"
+
+  depends_on = [null_resource.install_dependencies]
 }
 
 resource "aws_lambda_function" "handler" {
@@ -77,6 +114,10 @@ resource "aws_lambda_function" "handler" {
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   architectures    = ["arm64"]
   timeout          = 30
+
+  tracing_config {
+    mode = "Active"
+  }
 
   tags = {
     oncall-project = "rag-demo"
