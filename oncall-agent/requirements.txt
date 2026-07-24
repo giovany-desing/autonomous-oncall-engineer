@@ -6,3 +6,4 @@ boto3==1.35.97
 pyyaml==6.0.2
 groq==1.5.0
 python-dotenv==1.2.2
+requests==2.34.2
