@@ -30,4 +30,4 @@ notifications:
   webhook_env_var: SLACK_WEBHOOK_URL
 
 memory:
-  postmortem_store_path: ../../monitored-systems/rag-demo/.oncall/postmortems.json
+  postmortem_store_path: s3://oncall-agent-memory-531728396479/rag-demo/postmortems.json

@@ -28,7 +28,7 @@ class ProjectConfig:
     escalation_region: str
     notification_channel: str
     notification_webhook_env_var: str
-    postmortem_store_path: Path
+    postmortem_store_path: str  # ruta local o URI s3://bucket/key
     raw: dict
 
 
@@ -66,7 +66,11 @@ def load_project_config(manifest_path: str | Path) -> ProjectConfig:
         escalation_region=raw["llm"]["escalation"]["region"],
         notification_channel=raw["notifications"]["channel"],
         notification_webhook_env_var=raw["notifications"]["webhook_env_var"],
-        postmortem_store_path=_resolve(manifest_dir, raw["memory"]["postmortem_store_path"]),
+        postmortem_store_path=(
+            raw["memory"]["postmortem_store_path"]
+            if raw["memory"]["postmortem_store_path"].startswith("s3://")
+            else str(_resolve(manifest_dir, raw["memory"]["postmortem_store_path"]))
+        ),
         raw=raw,
     )
 

@@ -31,3 +31,13 @@ resource "aws_dynamodb_table" "incident_fingerprints" {
     project = "oncall-agent"
   }
 }
+
+resource "aws_s3_bucket" "agent_memory" {
+  bucket = "oncall-agent-memory-${data.aws_caller_identity.current.account_id}"
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
+data "aws_caller_identity" "current" {}
