@@ -142,3 +142,20 @@ resource "aws_lambda_function" "agent" {
     project = "oncall-agent"
   }
 }
+
+resource "aws_lambda_permission" "allow_cloudwatch_logs" {
+  statement_id  = "AllowCloudWatchLogsInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.agent.function_name
+  principal     = "logs.us-east-1.amazonaws.com"
+  source_arn    = "arn:aws:logs:us-east-1:531728396479:log-group:/aws/lambda/rag-demo-handler:*"
+}
+
+resource "aws_cloudwatch_log_subscription_filter" "rag_demo_errors" {
+  name            = "oncall-agent-error-trigger"
+  log_group_name  = "/aws/lambda/rag-demo-handler"
+  filter_pattern  = "ERROR"
+  destination_arn = aws_lambda_function.agent.arn
+
+  depends_on = [aws_lambda_permission.allow_cloudwatch_logs]
+}
