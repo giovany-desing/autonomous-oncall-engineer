@@ -14,7 +14,7 @@ import uuid
 
 from core.entrypoint import process_incident
 
-MANIFEST_PATH = "manifests/rag-demo.yaml"
+MANIFEST_PATH = "manifests/rag-demo-lambda.yaml"
 
 
 def _decode_cloudwatch_event(event: dict) -> dict:
