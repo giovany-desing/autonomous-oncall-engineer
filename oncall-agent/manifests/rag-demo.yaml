@@ -31,3 +31,8 @@ notifications:
 
 memory:
   postmortem_store_path: s3://oncall-agent-memory-531728396479/rag-demo/postmortems.json
+
+probe:
+  s3_bucket: rag-demo-uploads-531728396479
+  injected_payload: '{esto no es json valido, sonda sintetica}'
+  injected_key_prefix: uploads/oncall-agent-probe

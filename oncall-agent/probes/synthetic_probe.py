@@ -24,13 +24,13 @@ class ProbeResult:
     blind_spot_confirmed: bool
 
 
-def _upload_malformed_payload(bucket: str, probe_id: str) -> str:
+def _upload_malformed_payload(bucket: str, probe_id: str, injected_payload: str, key_prefix: str) -> str:
     s3 = boto3.client("s3")
-    key = f"uploads/{PROBE_MARKER_PREFIX}-{probe_id}.json"
+    key = f"{key_prefix}-{probe_id}.json"
     s3.put_object(
         Bucket=bucket,
         Key=key,
-        Body=b'{esto no es json valido, sonda sintetica}',
+        Body=injected_payload.encode("utf-8"),
         ContentType="application/json",
     )
     return key
@@ -61,10 +61,12 @@ def run_probe(
     bucket: str,
     log_group: str,
     region: str,
+    injected_payload: str = '{esto no es json valido, sonda sintetica}',
+    key_prefix: str = f"uploads/{PROBE_MARKER_PREFIX}",
     wait_seconds: int = 10,
 ) -> ProbeResult:
     probe_id = str(uuid.uuid4())[:8]
-    key = _upload_malformed_payload(bucket, probe_id)
+    key = _upload_malformed_payload(bucket, probe_id, injected_payload, key_prefix)
 
     time.sleep(wait_seconds)
 

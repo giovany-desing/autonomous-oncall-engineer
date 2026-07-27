@@ -29,6 +29,9 @@ class ProjectConfig:
     notification_channel: str
     notification_webhook_env_var: str
     postmortem_store_path: str  # ruta local o URI s3://bucket/key
+    probe_s3_bucket: str
+    probe_injected_payload: str
+    probe_injected_key_prefix: str
     raw: dict
 
 
@@ -71,6 +74,9 @@ def load_project_config(manifest_path: str | Path) -> ProjectConfig:
             if raw["memory"]["postmortem_store_path"].startswith("s3://")
             else str(_resolve(manifest_dir, raw["memory"]["postmortem_store_path"]))
         ),
+        probe_s3_bucket=raw.get("probe", {}).get("s3_bucket", ""),
+        probe_injected_payload=raw.get("probe", {}).get("injected_payload", ""),
+        probe_injected_key_prefix=raw.get("probe", {}).get("injected_key_prefix", ""),
         raw=raw,
     )
 
