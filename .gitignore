@@ -9,3 +9,6 @@ __pycache__/
 .DS_Store
 */.oncall/
 **/terraform/build/
+terraform.tfvars
+terraform.tfvars
+oncall-agent/manifests/*-lambda.yaml
