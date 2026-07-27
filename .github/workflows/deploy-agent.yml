@@ -1,0 +1,90 @@
+name: Deploy Autonomous On-Call Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'oncall-agent/**'
+      - 'monitored-systems/rag-demo/**'
+
+jobs:
+  rebuild-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Instalar dependencias del onboarding
+        working-directory: oncall-agent
+        run: |
+          python -m pip install --upgrade pip
+          pip install tree-sitter==0.23.2 tree-sitter-language-pack==0.7.2 groq==1.5.0 python-dotenv==1.2.2
+
+      - name: Regenerar base de conocimiento (onboarding)
+        working-directory: oncall-agent
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python onboarding/risk_map.py ../monitored-systems/rag-demo ../monitored-systems/rag-demo/.oncall/knowledge_base.json
+
+      - name: Instalar dependencias de Lambda (sin boto3/botocore)
+        run: |
+          mkdir -p /tmp/build/package
+          grep -v -E "^(boto3|botocore)" oncall-agent/requirements.txt > /tmp/requirements-lambda.txt
+          pip install \
+            -r /tmp/requirements-lambda.txt \
+            --target /tmp/build/package \
+            --platform manylinux2014_aarch64 \
+            --python-version 3.12 \
+            --only-binary=:all: \
+            --upgrade
+
+      - name: Copiar codigo fuente al paquete
+        run: |
+          rsync -a \
+            --exclude '.venv' \
+            --exclude '__pycache__' \
+            --exclude '.env' \
+            --exclude '.git' \
+            --exclude 'infra' \
+            --exclude '*.md' \
+            oncall-agent/ /tmp/build/package/
+          mkdir -p /tmp/build/package/monitored-systems/rag-demo/.oncall
+          cp monitored-systems/rag-demo/.oncall/knowledge_base.json /tmp/build/package/monitored-systems/rag-demo/.oncall/
+          find /tmp/build/package -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Generar el zip
+        run: |
+          cd /tmp/build/package
+          zip -r -X -q /tmp/build/agent.zip .
+          du -sh /tmp/build/agent.zip
+
+      - name: Subir el zip a S3
+        run: |
+          aws s3 cp /tmp/build/agent.zip s3://oncall-agent-deployments-531728396479/agent.zip
+
+      - name: Desplegar en ambas Lambdas
+        run: |
+          aws lambda update-function-code \
+            --function-name oncall-agent-diagnosis \
+            --s3-bucket oncall-agent-deployments-531728396479 \
+            --s3-key agent.zip
+          aws lambda wait function-updated --function-name oncall-agent-diagnosis
+          aws lambda update-function-code \
+            --function-name oncall-agent-synthetic-probe \
+            --s3-bucket oncall-agent-deployments-531728396479 \
+            --s3-key agent.zip
+          aws lambda wait function-updated --function-name oncall-agent-synthetic-probe
