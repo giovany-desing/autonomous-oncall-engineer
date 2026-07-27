@@ -15,3 +15,8 @@ variable "slack_webhook_url" {
   type        = string
   sensitive   = true
 }
+
+variable "alert_email" {
+  description = "Correo para alertas cuando el propio agente falla"
+  type        = string
+}

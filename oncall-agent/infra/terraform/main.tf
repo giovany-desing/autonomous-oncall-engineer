@@ -245,3 +245,61 @@ resource "aws_iam_role_policy" "scheduler_invoke_lambda" {
     }]
   })
 }
+
+resource "aws_sns_topic" "agent_self_monitoring" {
+  name = "oncall-agent-self-monitoring"
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
+resource "aws_sns_topic_subscription" "self_monitoring_email" {
+  topic_arn = aws_sns_topic.agent_self_monitoring.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+resource "aws_cloudwatch_metric_alarm" "diagnosis_lambda_errors" {
+  alarm_name          = "oncall-agent-diagnosis-errors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "El agente de diagnostico (oncall-agent-diagnosis) esta fallando -- el vigilante dejo de vigilar."
+  alarm_actions       = [aws_sns_topic.agent_self_monitoring.arn]
+  ok_actions          = [aws_sns_topic.agent_self_monitoring.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.agent.function_name
+  }
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "probe_lambda_errors" {
+  alarm_name          = "oncall-agent-synthetic-probe-errors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "La sonda sintetica (oncall-agent-synthetic-probe) esta fallando."
+  alarm_actions       = [aws_sns_topic.agent_self_monitoring.arn]
+  ok_actions          = [aws_sns_topic.agent_self_monitoring.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.synthetic_probe.function_name
+  }
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
