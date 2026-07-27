@@ -159,3 +159,89 @@ resource "aws_cloudwatch_log_subscription_filter" "rag_demo_errors" {
 
   depends_on = [aws_lambda_permission.allow_cloudwatch_logs]
 }
+
+resource "aws_lambda_function" "synthetic_probe" {
+  function_name = "oncall-agent-synthetic-probe"
+  runtime       = "python3.12"
+  handler       = "probes.probe_handler.lambda_handler"
+  role          = aws_iam_role.agent_lambda_role.arn
+  architectures = ["arm64"]
+  timeout       = 60
+  memory_size   = 512
+
+  s3_bucket = aws_s3_bucket.lambda_deployments.id
+  s3_key    = "agent.zip"
+
+  environment {
+    variables = {
+      GROQ_API_KEY      = var.groq_api_key
+      SLACK_WEBHOOK_URL = var.slack_webhook_url
+    }
+  }
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
+resource "aws_iam_role_policy" "probe_s3_write" {
+  name = "oncall-agent-probe-s3-write"
+  role = aws_iam_role.agent_lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "ProbeUploadWrite"
+      Effect   = "Allow"
+      Action   = ["s3:PutObject"]
+      Resource = "arn:aws:s3:::rag-demo-uploads-531728396479/uploads/*"
+    }]
+  })
+}
+
+resource "aws_scheduler_schedule" "synthetic_probe_schedule" {
+  name       = "oncall-agent-probe-schedule"
+  group_name = "default"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  schedule_expression = "rate(15 minutes)"
+
+  target {
+    arn      = aws_lambda_function.synthetic_probe.arn
+    role_arn = aws_iam_role.scheduler_role.arn
+  }
+}
+
+resource "aws_iam_role" "scheduler_role" {
+  name = "oncall-agent-scheduler-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+    }]
+  })
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
+resource "aws_iam_role_policy" "scheduler_invoke_lambda" {
+  name = "oncall-agent-scheduler-invoke"
+  role = aws_iam_role.scheduler_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["lambda:InvokeFunction"]
+      Resource = aws_lambda_function.synthetic_probe.arn
+    }]
+  })
+}
