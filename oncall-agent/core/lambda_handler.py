@@ -43,6 +43,10 @@ def lambda_handler(event, context):
         send_notifications=True,
     )
 
+    print(f"RESULTADO_DIAGNOSTICO: incident_id={incident_id} project={log_group} "
+          f"processed={result['processed']} reason={result.get('reason')} "
+          f"notification_sent={result.get('diagnosis', {}).get('notification_sent') if result['processed'] else 'N/A'}")
+
     return {
         "statusCode": 200,
         "body": json.dumps({

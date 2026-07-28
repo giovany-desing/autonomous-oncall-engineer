@@ -98,6 +98,12 @@ resource "aws_iam_role_policy" "agent_lambda_permissions" {
         Resource = "${aws_s3_bucket.agent_memory.arn}/*"
       },
       {
+        Sid      = "S3MemoryListBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = aws_s3_bucket.agent_memory.arn
+      },
+      {
         Sid      = "BedrockEscalation"
         Effect   = "Allow"
         Action   = ["bedrock:InvokeModel"]
@@ -302,4 +308,38 @@ resource "aws_cloudwatch_metric_alarm" "probe_lambda_errors" {
   tags = {
     project = "oncall-agent"
   }
+}
+
+resource "aws_lambda_permission" "allow_cloudwatch_logs_moto_api" {
+  statement_id  = "AllowCloudWatchLogsInvokeMotoApi"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.agent.function_name
+  principal     = "logs.us-east-1.amazonaws.com"
+  source_arn    = "arn:aws:logs:us-east-1:531728396479:log-group:/aws/lambda/moto-chatbot-dev-api:*"
+}
+
+resource "aws_cloudwatch_log_subscription_filter" "moto_api_errors" {
+  name            = "oncall-agent-error-trigger-moto-api"
+  log_group_name  = "/aws/lambda/moto-chatbot-dev-api"
+  filter_pattern  = "?ERROR ?WARNING ?\"Task timed out\""
+  destination_arn = aws_lambda_function.agent.arn
+
+  depends_on = [aws_lambda_permission.allow_cloudwatch_logs_moto_api]
+}
+
+resource "aws_lambda_permission" "allow_cloudwatch_logs_moto_worker" {
+  statement_id  = "AllowCloudWatchLogsInvokeMotoWorker"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.agent.function_name
+  principal     = "logs.us-east-1.amazonaws.com"
+  source_arn    = "arn:aws:logs:us-east-1:531728396479:log-group:/aws/lambda/moto-chatbot-dev-worker:*"
+}
+
+resource "aws_cloudwatch_log_subscription_filter" "moto_worker_errors" {
+  name            = "oncall-agent-error-trigger-moto-worker"
+  log_group_name  = "/aws/lambda/moto-chatbot-dev-worker"
+  filter_pattern  = "?ERROR ?WARNING ?\"Task timed out\""
+  destination_arn = aws_lambda_function.agent.arn
+
+  depends_on = [aws_lambda_permission.allow_cloudwatch_logs_moto_worker]
 }
