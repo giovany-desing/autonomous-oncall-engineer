@@ -6,14 +6,32 @@ on:
     paths:
       - 'oncall-agent/**'
       - 'monitored-systems/rag-demo/**'
+  repository_dispatch:
+    types: [project_updated]
 
 jobs:
   rebuild-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout autonomous-oncall-engineer
         uses: actions/checkout@v4
+
+      - name: Determinar proyecto disparador
+        id: project
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "name=${{ github.event.client_payload.project }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=rag-demo" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout del repo del proyecto externo (si aplica)
+        if: steps.project.outputs.name == 'moto-chatbot'
+        uses: actions/checkout@v4
+        with:
+          repository: giovany-desing/moto-chatbot-aws
+          path: external-projects/moto-chatbot
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -33,12 +51,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install tree-sitter==0.23.2 tree-sitter-language-pack==0.7.2 groq==1.5.0 python-dotenv==1.2.2 pyyaml==6.0.2
 
-      - name: Regenerar base de conocimiento (onboarding)
+      - name: Regenerar base de conocimiento del proyecto disparador
         working-directory: oncall-agent
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          python onboarding/risk_map.py ../monitored-systems/rag-demo ../monitored-systems/rag-demo/.oncall/knowledge_base.json
+          PROJECT="${{ steps.project.outputs.name }}"
+          if [ "$PROJECT" = "rag-demo" ]; then
+            SOURCE_PATH="../monitored-systems/rag-demo"
+          else
+            SOURCE_PATH="../external-projects/$PROJECT"
+          fi
+          mkdir -p "/tmp/kb-output"
+          python onboarding/risk_map.py "$SOURCE_PATH" "/tmp/kb-output/knowledge_base.json"
+          aws s3 cp "/tmp/kb-output/knowledge_base.json" \
+            "s3://oncall-agent-memory-531728396479/knowledge-bases/$PROJECT/knowledge_base.json"
+
+      - name: Descargar TODAS las bases de conocimiento existentes desde S3
+        run: |
+          mkdir -p /tmp/build/all-knowledge-bases
+          aws s3 sync s3://oncall-agent-memory-531728396479/knowledge-bases/ /tmp/build/all-knowledge-bases/
 
       - name: Instalar dependencias de Lambda (sin boto3/botocore)
         run: |
@@ -52,7 +84,7 @@ jobs:
             --only-binary=:all: \
             --upgrade
 
-      - name: Copiar codigo fuente al paquete
+      - name: Copiar codigo fuente del agente al paquete
         run: |
           rsync -a \
             --exclude '.venv' \
@@ -62,15 +94,29 @@ jobs:
             --exclude 'infra' \
             --exclude '*.md' \
             oncall-agent/ /tmp/build/package/
-          mkdir -p /tmp/build/package/monitored-systems/rag-demo/.oncall
-          cp monitored-systems/rag-demo/.oncall/knowledge_base.json /tmp/build/package/monitored-systems/rag-demo/.oncall/
           find /tmp/build/package -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-      - name: Generar manifiesto de Lambda desde el manifiesto base
+      - name: Copiar todas las bases de conocimiento al paquete
+        run: |
+          for kb_dir in /tmp/build/all-knowledge-bases/*/; do
+            project=$(basename "$kb_dir")
+            mkdir -p "/tmp/build/package/monitored-systems/$project/.oncall"
+            cp "$kb_dir/knowledge_base.json" "/tmp/build/package/monitored-systems/$project/.oncall/"
+          done
+          echo "Bases de conocimiento incluidas en el paquete:"
+          find /tmp/build/package/monitored-systems -name "knowledge_base.json"
+
+      - name: Generar manifiestos de Lambda para todos los proyectos
         working-directory: oncall-agent
         run: |
-          python onboarding/generate_lambda_manifest.py manifests/rag-demo.yaml manifests/rag-demo-lambda.yaml
-          cp manifests/rag-demo-lambda.yaml /tmp/build/package/manifests/
+          for manifest in manifests/*.yaml; do
+            base=$(basename "$manifest" .yaml)
+            if [[ "$base" == *-lambda ]]; then
+              continue
+            fi
+            python onboarding/generate_lambda_manifest.py "$manifest" "manifests/${base}-lambda.yaml"
+            cp "manifests/${base}.yaml" "manifests/${base}-lambda.yaml" /tmp/build/package/manifests/
+          done
 
       - name: Generar el zip
         run: |

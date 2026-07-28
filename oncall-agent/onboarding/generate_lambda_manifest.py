@@ -18,11 +18,23 @@ def generate_lambda_manifest(base_manifest_path: Path, output_path: Path) -> Non
     with open(base_manifest_path) as f:
         raw = yaml.safe_load(f)
 
+    project_name = raw["project"]["name"]
+
     def adjust_path(path_str: str) -> str:
         if path_str.startswith("s3://"):
             return path_str
         if path_str.startswith("../../"):
             return path_str.replace("../../", "../", 1)
+        if path_str.startswith("/"):
+            # Ruta absoluta local (proyecto fuera del repo del agente) --
+            # en el paquete de Lambda, el codigo de este proyecto vive
+            # SIEMPRE en monitored-systems/<project.name>/, sin importar
+            # como se llame la carpeta local -- consistencia garantizada
+            # por el nombre declarado en el manifiesto, no por convencion
+            # de directorios.
+            if path_str.endswith(".json"):
+                return f"../monitored-systems/{project_name}/.oncall/knowledge_base.json"
+            return f"../monitored-systems/{project_name}"
         return path_str
 
     raw["project"]["root_path"] = adjust_path(raw["project"]["root_path"])
