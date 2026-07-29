@@ -30,3 +30,6 @@ notifications:
 
 memory:
   postmortem_store_path: s3://oncall-agent-memory-531728396479/moto-chatbot/postmortems.json
+
+source:
+  repo: giovany-desing/moto-chatbot-aws

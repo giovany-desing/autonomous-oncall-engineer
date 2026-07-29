@@ -17,22 +17,6 @@ jobs:
       - name: Checkout autonomous-oncall-engineer
         uses: actions/checkout@v4
 
-      - name: Determinar proyecto disparador
-        id: project
-        run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "name=${{ github.event.client_payload.project }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=rag-demo" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout del repo del proyecto externo (si aplica)
-        if: steps.project.outputs.name == 'moto-chatbot'
-        uses: actions/checkout@v4
-        with:
-          repository: giovany-desing/moto-chatbot-aws
-          path: external-projects/moto-chatbot
-
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
@@ -50,6 +34,38 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install tree-sitter==0.23.2 tree-sitter-language-pack==0.7.2 groq==1.5.0 python-dotenv==1.2.2 pyyaml==6.0.2
+
+      - name: Determinar proyecto disparador
+        id: project
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "name=${{ github.event.client_payload.project }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=rag-demo" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clonar dinamicamente TODOS los proyectos externos declarados
+        working-directory: oncall-agent
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_CLONE_TOKEN }}
+        run: |
+          mkdir -p ../external-projects
+          for manifest in manifests/*.yaml; do
+            base=$(basename "$manifest" .yaml)
+            if [[ "$base" == *-lambda ]]; then
+              continue
+            fi
+            repo=$(python -c "
+import yaml
+with open('$manifest') as f:
+    raw = yaml.safe_load(f)
+print(raw.get('source', {}).get('repo', ''))
+")
+            if [ -n "$repo" ]; then
+              echo "Clonando $repo para el proyecto $base..."
+              gh repo clone "$repo" "../external-projects/$base" -- --depth 1
+            fi
+          done
 
       - name: Regenerar base de conocimiento del proyecto disparador
         working-directory: oncall-agent
