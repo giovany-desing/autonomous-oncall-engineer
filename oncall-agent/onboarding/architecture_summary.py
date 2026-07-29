@@ -91,10 +91,16 @@ Total de funciones catalogadas: {len(all_functions)}
     return prompt
 
 
-def generate_architecture_summary(project_root: Path, model: str = "llama-3.3-70b-versatile") -> dict:
+def generate_architecture_summary(
+    project_root: Path,
+    model: str = "llama-3.3-70b-versatile",
+    extra_context: str = "",
+) -> dict:
     readme = _read_readme(project_root)
     scan_results = scan_directory(project_root)
     user_prompt = _build_user_prompt(readme, scan_results)
+    if extra_context.strip():
+        user_prompt += f"\n\nDocumentacion adicional provista por el usuario (infraestructura o logica de negocio):\n---\n{extra_context.strip()}\n---\n"
 
     client = Groq(api_key=os.environ["GROQ_API_KEY"])
     response = client.chat.completions.create(

@@ -17,9 +17,13 @@ from architecture_summary import generate_architecture_summary
 from dataclasses import asdict
 
 
-def build_knowledge_base(project_root: Path, model: str = "llama-3.3-70b-versatile") -> dict:
+def build_knowledge_base(
+    project_root: Path,
+    model: str = "llama-3.3-70b-versatile",
+    extra_context: str = "",
+) -> dict:
     scan_results = scan_directory(project_root)
-    arch_summary = generate_architecture_summary(project_root, model=model)
+    arch_summary = generate_architecture_summary(project_root, model=model, extra_context=extra_context)
 
     all_functions = []
     all_error_blocks = []
