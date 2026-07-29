@@ -196,10 +196,16 @@ def scan_file(filepath: Path) -> ScanResult:
     return ScanResult(file=str(filepath), functions=functions, error_blocks=error_blocks)
 
 
+EXCLUDED_DIR_NAMES = {
+    ".venv", "venv", "__pycache__", "node_modules", "build", "dist",
+    "site-packages", ".git", ".terraform",
+}
+
+
 def scan_directory(root: Path) -> list:
     results = []
     for py_file in root.rglob("*.py"):
-        if ".venv" in py_file.parts:
+        if any(part in EXCLUDED_DIR_NAMES for part in py_file.parts):
             continue
         results.append(scan_file(py_file))
     return results
