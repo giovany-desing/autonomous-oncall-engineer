@@ -343,3 +343,25 @@ resource "aws_cloudwatch_log_subscription_filter" "moto_worker_errors" {
 
   depends_on = [aws_lambda_permission.allow_cloudwatch_logs_moto_worker]
 }
+
+resource "aws_dynamodb_table" "incident_context" {
+  name         = "oncall-agent-incident-context"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "thread_ts"
+
+  attribute {
+    name = "thread_ts"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expires_at"
+    enabled         = true
+  }
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
+

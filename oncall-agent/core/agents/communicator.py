@@ -1,20 +1,27 @@
 """
 Nodo Comunicador del grafo de LangGraph. Formatea el resultado final del
-diagnóstico (hipótesis validada, confianza, evidencia, costo) como un
-mensaje para Slack, y lo envía vía webhook. No usa LLM — solo presenta
-lo que los otros tres nodos ya produjeron, sin agregar interpretación nueva.
+diagnóstico y lo envía a Slack vía Bot Token (chat.postMessage, no
+webhook) -- necesario para capturar el thread_ts y poder sostener una
+conversación de seguimiento en el mismo hilo. Guarda el estado completo
+del incidente en DynamoDB, indexado por thread_ts, para que preguntas
+futuras en el hilo puedan recuperar la evidencia real usada.
 """
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import boto3
 import requests
+from dotenv import load_dotenv
 
 from core.config import ProjectConfig
 from core.state import DiagnosisState
+
+load_dotenv()
 
 GROQ_PRICE_PER_MILLION_TOKENS = {
     "llama-3.3-70b-versatile": {"input": 0.59, "output": 0.79},
@@ -22,6 +29,10 @@ GROQ_PRICE_PER_MILLION_TOKENS = {
 BEDROCK_PRICE_PER_MILLION_TOKENS = {
     "anthropic.claude-3-5-sonnet-20241022-v2:0": {"input": 3.00, "output": 15.00},
 }
+
+SLACK_CHANNEL = "todo-oncall-agent-dev"
+CONTEXT_TABLE_NAME = "oncall-agent-incident-context"
+CONTEXT_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 dias
 
 
 def _estimate_cost_usd(cost_breakdown: list) -> float:
@@ -74,25 +85,63 @@ def _format_message(state: DiagnosisState) -> str:
         f"*Evidencia:* {len(candidate_functions)} función(es) de código analizada(s), "
         f"{len(similar_postmortems)} postmortem(s) similar(es) encontrado(s)",
         f"*Costo de esta investigación:* ${cost_usd:.4f} USD",
+        "",
+        "_Responde en este hilo si tienes preguntas sobre el diagnostico._",
     ]
     return "\n".join(lines)
+
+
+def _post_to_slack(message: str) -> dict:
+    bot_token = os.environ.get("SLACK_BOT_TOKEN")
+    if not bot_token:
+        return {"ok": False, "error": "SLACK_BOT_TOKEN no configurado"}
+
+    response = requests.post(
+        "https://slack.com/api/chat.postMessage",
+        headers={"Authorization": f"Bearer {bot_token}"},
+        json={"channel": SLACK_CHANNEL, "text": message},
+    )
+    return response.json()
+
+
+def _save_incident_context(thread_ts: str, state: DiagnosisState, region: str) -> None:
+    table = boto3.resource("dynamodb", region_name=region).Table(CONTEXT_TABLE_NAME)
+    table.put_item(
+        Item={
+            "thread_ts": thread_ts,
+            "incident_id": state.get("incident_id", ""),
+            "project_name": state.get("project_name", ""),
+            "manifest_path": state.get("manifest_path", ""),
+            "validated_hypothesis": json.dumps(state.get("validated_hypothesis") or {}),
+            "confidence_level": state.get("confidence_level", ""),
+            "candidate_functions": json.dumps(state.get("candidate_functions", [])),
+            "log_events": json.dumps(state.get("log_events", [])[-20:]),
+            "similar_postmortems": json.dumps(state.get("similar_postmortems", [])),
+            "expires_at": int(time.time()) + CONTEXT_TTL_SECONDS,
+        }
+    )
 
 
 def communicator_node(state: DiagnosisState, config: ProjectConfig, send: bool = True) -> DiagnosisState:
     message = _format_message(state)
     notification_sent = False
+    thread_ts = None
 
     if send:
-        webhook_url = os.environ.get(config.notification_webhook_env_var)
-        if webhook_url:
-            response = requests.post(webhook_url, json={"text": message})
-            notification_sent = response.status_code == 200
-        else:
-            notification_sent = False
+        slack_response = _post_to_slack(message)
+        notification_sent = slack_response.get("ok", False)
+        thread_ts = slack_response.get("ts")
+
+        if notification_sent and thread_ts:
+            try:
+                _save_incident_context(thread_ts, state, config.aws_region)
+            except Exception as e:
+                print(f"ADVERTENCIA: no se pudo guardar el contexto del incidente: {e}")
 
     return {
         "final_message": message,
         "notification_sent": notification_sent,
+        "slack_thread_ts": thread_ts,
     }
 
 
@@ -104,8 +153,9 @@ if __name__ == "__main__":
 
     config = load_project_config("manifests/rag-demo.yaml")
     initial_state: DiagnosisState = {
-        "incident_id": "test-manual-004",
+        "incident_id": "test-manual-bot-token",
         "project_name": config.name,
+        "manifest_path": "manifests/rag-demo.yaml",
         "trigger_source": "manual_test",
         "trigger_summary": "",
     }
@@ -114,7 +164,8 @@ if __name__ == "__main__":
     state = {**state, **hypothesis_node(state, config)}
     state = {**state, **validator_node(state, config)}
 
-    result = communicator_node(state, config, send=False)
+    result = communicator_node(state, config, send=True)
     print(result["final_message"])
     print()
-    print(f"Notificación enviada: {result['notification_sent']}")
+    print(f"Notificacion enviada: {result['notification_sent']}")
+    print(f"Thread ts: {result['slack_thread_ts']}")
