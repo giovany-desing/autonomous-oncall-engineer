@@ -92,6 +92,12 @@ resource "aws_iam_role_policy" "agent_lambda_permissions" {
         Resource = aws_dynamodb_table.incident_fingerprints.arn
       },
       {
+        Sid      = "DynamoDBIncidentContext"
+        Effect   = "Allow"
+        Action   = ["dynamodb:PutItem", "dynamodb:GetItem"]
+        Resource = aws_dynamodb_table.incident_context.arn
+      },
+      {
         Sid      = "S3Memory"
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject"]
@@ -141,6 +147,7 @@ resource "aws_lambda_function" "agent" {
     variables = {
       GROQ_API_KEY      = var.groq_api_key
       SLACK_WEBHOOK_URL = var.slack_webhook_url
+      SLACK_BOT_TOKEN   = var.slack_bot_token
     }
   }
 
@@ -182,6 +189,7 @@ resource "aws_lambda_function" "synthetic_probe" {
     variables = {
       GROQ_API_KEY      = var.groq_api_key
       SLACK_WEBHOOK_URL = var.slack_webhook_url
+      SLACK_BOT_TOKEN   = var.slack_bot_token
     }
   }
 
@@ -365,3 +373,64 @@ resource "aws_dynamodb_table" "incident_context" {
 }
 
 
+
+resource "aws_lambda_function" "slack_events" {
+  function_name = "oncall-agent-slack-events"
+  runtime       = "python3.12"
+  handler       = "core.slack_events_handler.lambda_handler"
+  role          = aws_iam_role.agent_lambda_role.arn
+  architectures = ["arm64"]
+  timeout       = 30
+  memory_size   = 512
+
+  s3_bucket = aws_s3_bucket.lambda_deployments.id
+  s3_key    = "agent.zip"
+
+  environment {
+    variables = {
+      GROQ_API_KEY      = var.groq_api_key
+      SLACK_BOT_TOKEN   = var.slack_bot_token
+      SLACK_SIGNING_SECRET = var.slack_signing_secret
+    }
+  }
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
+resource "aws_apigatewayv2_api" "slack_events_api" {
+  name          = "oncall-agent-slack-events-api"
+  protocol_type = "HTTP"
+}
+
+resource "aws_apigatewayv2_integration" "slack_events_integration" {
+  api_id                 = aws_apigatewayv2_api.slack_events_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.slack_events.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "slack_events_route" {
+  api_id    = aws_apigatewayv2_api.slack_events_api.id
+  route_key = "POST /slack/events"
+  target    = "integrations/${aws_apigatewayv2_integration.slack_events_integration.id}"
+}
+
+resource "aws_apigatewayv2_stage" "slack_events_stage" {
+  api_id      = aws_apigatewayv2_api.slack_events_api.id
+  name        = "$default"
+  auto_deploy = true
+}
+
+resource "aws_lambda_permission" "allow_apigateway_invoke" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.slack_events.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.slack_events_api.execution_arn}/*/*"
+}
+
+output "slack_events_endpoint" {
+  value = "${aws_apigatewayv2_api.slack_events_api.api_endpoint}/slack/events"
+}

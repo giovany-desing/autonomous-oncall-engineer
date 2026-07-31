@@ -20,3 +20,15 @@ variable "alert_email" {
   description = "Correo para alertas cuando el propio agente falla"
   type        = string
 }
+
+variable "slack_bot_token" {
+  description = "Bot Token de Slack para chat.postMessage y responder en hilos"
+  type        = string
+  sensitive   = true
+}
+
+variable "slack_signing_secret" {
+  description = "Signing Secret de Slack para verificar que los eventos son legitimos"
+  type        = string
+  sensitive   = true
+}
