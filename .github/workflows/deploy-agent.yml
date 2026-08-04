@@ -77,6 +77,13 @@ jobs:
           python onboarding/risk_map.py "$SOURCE_PATH" "/tmp/kb-output/knowledge_base.json"
           aws s3 cp "/tmp/kb-output/knowledge_base.json" \
             "s3://oncall-agent-memory-531728396479/knowledge-bases/$PROJECT/knowledge_base.json"
+          echo "SOURCE_PATH=$SOURCE_PATH" >> "$GITHUB_ENV"
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
+
+      - name: Subir codigo fuente completo a S3 (para el chat conversacional)
+        working-directory: oncall-agent
+        run: |
+          python onboarding/upload_source_to_s3.py "$SOURCE_PATH" "$PROJECT"
 
       - name: Descargar TODAS las bases de conocimiento existentes desde S3
         run: |

@@ -48,6 +48,40 @@ def find_function(knowledge_base: dict, function_name: str) -> FunctionLookupRes
     return FunctionLookupResult(found=False)
 
 
+# Palabras genericas en español/ingles que no aportan como termino de
+# busqueda por si solas -- filtrarlas evita que "configuracion de la
+# base de datos" solo matchee por la palabra "de" o "la".
+STOPWORDS = {
+    "de", "la", "el", "los", "las", "en", "un", "una", "y", "o", "que",
+    "the", "of", "a", "an", "in", "on", "for", "and", "or",
+}
+
+
+def search_functions_by_keyword(knowledge_base: dict, keyword: str, limit: int = 5) -> list:
+    """
+    Busqueda de texto simple (no semantica) sobre nombre de funcion,
+    nombre de archivo, y codigo fuente. Separa la consulta en palabras
+    individuales (ignorando stopwords) y rankea por cuantas de esas
+    palabras aparecen -- asi una consulta en lenguaje natural como
+    "configuracion de la base de datos" encuentra archivos que
+    contengan "configuracion", "base", o "datos", no solo si contienen
+    la frase exacta completa.
+    """
+    words = [w for w in keyword.lower().split() if w not in STOPWORDS and len(w) > 2]
+    if not words:
+        words = [keyword.lower()]
+
+    scored = []
+    for fn in knowledge_base.get("funciones", []):
+        haystack = f"{fn['name']} {fn['file']} {fn.get('source_code', '')}".lower()
+        score = sum(1 for w in words if w in haystack)
+        if score > 0:
+            scored.append((score, fn))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [fn for _, fn in scored[:limit]]
+
+
 def find_functions_by_risk(knowledge_base: dict, risk: str = "alto") -> list:
     """
     Devuelve las funciones que tienen al menos un bloque de manejo de

@@ -380,7 +380,7 @@ resource "aws_lambda_function" "slack_events" {
   handler       = "core.slack_events_handler.lambda_handler"
   role          = aws_iam_role.agent_lambda_role.arn
   architectures = ["arm64"]
-  timeout       = 30
+  timeout       = 90
   memory_size   = 512
 
   s3_bucket = aws_s3_bucket.lambda_deployments.id
