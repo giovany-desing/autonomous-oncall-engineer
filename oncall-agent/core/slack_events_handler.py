@@ -243,8 +243,10 @@ def _reply_in_thread(channel: str, thread_ts: str, text: str) -> None:
 
 
 def lambda_handler(event, context):
+    print(f"DEBUG entrada: event_keys={list(event.keys())}")
     headers = {k.lower(): v for k, v in event.get("headers", {}).items()}
     body = event.get("body", "")
+    print(f"DEBUG body_len={len(body)} headers_presentes={list(headers.keys())}")
 
     payload = json.loads(body)
 
@@ -255,27 +257,42 @@ def lambda_handler(event, context):
             "body": payload.get("challenge", ""),
         }
 
-    if not _verify_slack_signature(headers, body):
+    signature_valid = _verify_slack_signature(headers, body)
+    print(f"DEBUG signature_valid={signature_valid}")
+    if not signature_valid:
         return {"statusCode": 401, "body": "Firma invalida"}
 
     if headers.get("x-slack-retry-num"):
+        print(f"DEBUG: ignorado, reintento num={headers.get('x-slack-retry-num')}")
         return {"statusCode": 200, "body": "ignorado (reintento)"}
 
     slack_event = payload.get("event", {})
+    print(f"DEBUG payload_type={payload.get('type')} event_type={slack_event.get('type')} "
+          f"bot_id={slack_event.get('bot_id')} user={slack_event.get('user')} "
+          f"thread_ts={slack_event.get('thread_ts')} text={slack_event.get('text')}")
 
     if slack_event.get("type") != "message":
+        print(f"DEBUG: ignorado, type={slack_event.get('type')}")
         return {"statusCode": 200, "body": "ignorado"}
 
-    if slack_event.get("bot_id") or slack_event.get("user") == _get_bot_user_id():
+    bot_user_id = _get_bot_user_id()
+    print(f"DEBUG bot_user_id={bot_user_id}")
+    if slack_event.get("bot_id") or slack_event.get("user") == bot_user_id:
+        print("DEBUG: ignorado, mensaje propio")
         return {"statusCode": 200, "body": "ignorado (mensaje propio)"}
 
     thread_ts = slack_event.get("thread_ts")
     if not thread_ts:
+        print("DEBUG: ignorado, no tiene thread_ts")
         return {"statusCode": 200, "body": "ignorado (no es respuesta en hilo)"}
 
     incident_context = _load_incident_context(thread_ts)
+    print(f"DEBUG incident_context encontrado={incident_context is not None}")
     if not incident_context:
+        print(f"DEBUG: ignorado, no hay contexto para thread_ts={thread_ts}")
         return {"statusCode": 200, "body": "ignorado (hilo no corresponde a un incidente conocido)"}
+
+    print("DEBUG: contexto encontrado, procediendo a llamar a Groq")
 
     question = slack_event.get("text", "")
 

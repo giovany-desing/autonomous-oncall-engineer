@@ -1,0 +1,60 @@
+{
+  "project_root": "../monitored-systems/rag-demo",
+  "generated_at": "2026-07-22T21:35:19.357798+00:00",
+  "resumen_arquitectura": "El sistema rag-demo es un sistema de ingesta y validación de documentos para un pipeline de RAG. Cuando un usuario sube un documento JSON a un bucket de S3, una Lambda se dispara automáticamente vía evento de S3, descarga el archivo, valida que tenga la estructura esperada, y lo deja listo para ser indexado en el paso siguiente del pipeline. El sistema utiliza AWS Lambda como cómputo y S3 como almacenamiento, y depende de Amazon S3 para la lectura del documento subido. El flujo de datos comienza con la subida de un archivo a S3, seguido de la descarga y validación del archivo por parte de la Lambda.",
+  "puntos_fragiles": [
+    {
+      "funcion": "process_upload",
+      "archivo": "../monitored-systems/rag-demo/lambda/handler.py",
+      "riesgo": "alto",
+      "por_que": "La función captura cualquier excepción durante la descarga o el parseo sin registrar el error ni relanzarlo, lo que puede causar problemas silenciosos y difíciles de detectar. Esto puede ocurrir si S3 lanza un ThrottlingException o el JSON viene malformado.",
+      "depende_de": [
+        "s3.get_object"
+      ]
+    }
+  ],
+  "funciones": [
+    {
+      "file": "../monitored-systems/rag-demo/lambda/handler.py",
+      "name": "process_upload",
+      "line_start": 6,
+      "line_end": 13,
+      "external_calls": [
+        "s3.get_object"
+      ]
+    },
+    {
+      "file": "../monitored-systems/rag-demo/lambda/handler.py",
+      "name": "validate_and_store",
+      "line_start": 15,
+      "line_end": 19,
+      "external_calls": []
+    },
+    {
+      "file": "../monitored-systems/rag-demo/lambda/handler.py",
+      "name": "lambda_handler",
+      "line_start": 21,
+      "line_end": 25,
+      "external_calls": []
+    }
+  ],
+  "bloques_manejo_errores": [
+    {
+      "file": "../monitored-systems/rag-demo/lambda/handler.py",
+      "line_start": 12,
+      "line_end": 13,
+      "exception_type": "Exception (bare)",
+      "has_logging": false,
+      "has_reraise": false,
+      "is_bare_except": true,
+      "risk": "alto",
+      "enclosing_function": "process_upload"
+    }
+  ],
+  "_metadata": {
+    "model": "llama-3.3-70b-versatile",
+    "prompt_tokens": 867,
+    "completion_tokens": 291,
+    "total_tokens": 1158
+  }
+}

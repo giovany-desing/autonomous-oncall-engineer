@@ -42,6 +42,7 @@ class FunctionInfo:
     line_start: int
     line_end: int
     external_calls: list = field(default_factory=list)
+    source_code: str = ""
 
 
 @dataclass
@@ -165,12 +166,16 @@ def scan_file(filepath: Path) -> ScanResult:
             name_node = node.child_by_field_name("name")
             name = _node_text(name_node, source) if name_node else "<anon>"
             external_calls = _detect_external_calls(node, source, client_symbols)
+            function_source = _node_text(node, source)
+            if len(function_source) > 3000:
+                function_source = function_source[:3000] + "\n... (truncado)"
             functions.append(FunctionInfo(
                 file=str(filepath),
                 name=name,
                 line_start=node.start_point[0] + 1,
                 line_end=node.end_point[0] + 1,
                 external_calls=external_calls,
+                source_code=function_source,
             ))
 
         if node.type == "except_clause":
