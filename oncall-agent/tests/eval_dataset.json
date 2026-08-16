@@ -1,0 +1,34 @@
+[
+  {
+    "id": "rag-demo-except-pass",
+    "manifest": "manifests/rag-demo.yaml",
+    "trigger_summary": "Lambda ejecutada sin errores explicitos en los logs tras subir un JSON malformado a S3 (uploads/bad-upload.json)",
+    "expected_file_contains": "handler.py",
+    "expected_function": "process_upload",
+    "descripcion": "Excepcion silenciosa (bare except) en process_upload, sin logging ni re-raise, al fallar el parseo de un JSON malformado descargado de S3"
+  },
+  {
+    "id": "moto-chatbot-syntax-error",
+    "manifest": "manifests/moto-chatbot.yaml",
+    "trigger_summary": "Runtime.UserCodeSyntaxError: Syntax error in module 'lambdas.api_handler': expected ':' (routes.py, def chat(request: ChatRequest) Line 66)",
+    "expected_file_contains": "routes.py",
+    "expected_function": "chat",
+    "descripcion": "Error de sintaxis real introducido deliberadamente: falta ':' al final de la definicion de la funcion chat en app/api/routes.py"
+  },
+  {
+    "id": "moto-chatbot-db-host-invalido",
+    "manifest": "manifests/moto-chatbot.yaml",
+    "trigger_summary": "Error al aplicar migraciones en el arranque: no se puede traducir el nombre de host 'db-host-invalido.no-existe.local' a una direccion",
+    "expected_file_contains": "config.py",
+    "expected_function": null,
+    "descripcion": "Host de base de datos invalido en la configuracion, causando fallo de DNS al intentar conectar"
+  },
+  {
+    "id": "moto-chatbot-bedrock-throttling",
+    "manifest": "manifests/moto-chatbot.yaml",
+    "trigger_summary": "WARNING: Throttling en Bedrock embeddings, reintento en 16.0s (intento 5). Task timed out after 60.01 seconds",
+    "expected_file_contains": "embedding_service.py",
+    "expected_function": null,
+    "descripcion": "Throttling repetido de Bedrock en el servicio de embeddings, agotando el timeout de 60s de la Lambda tras 5 reintentos con backoff exponencial"
+  }
+]

@@ -113,7 +113,7 @@ resource "aws_iam_role_policy" "agent_lambda_permissions" {
         Sid      = "BedrockEscalation"
         Effect   = "Allow"
         Action   = ["bedrock:InvokeModel"]
-        Resource = "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0"
+        Resource = "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5"
       },
       {
         Sid      = "ResourceDiscovery"
@@ -380,7 +380,7 @@ resource "aws_lambda_function" "slack_events" {
   handler       = "core.slack_events_handler.lambda_handler"
   role          = aws_iam_role.agent_lambda_role.arn
   architectures = ["arm64"]
-  timeout       = 90
+  timeout       = 120
   memory_size   = 512
 
   s3_bucket = aws_s3_bucket.lambda_deployments.id

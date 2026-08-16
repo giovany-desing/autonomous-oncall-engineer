@@ -25,6 +25,29 @@ def _s3_source_prefix(project_name: str) -> str:
     return f"source-code/{project_name}/"
 
 
+def _normalizar_ruta(project_name: str, ruta_relativa: str) -> str:
+    """
+    El LLM a veces construye rutas basadas en referencias que vio en
+    codigo (ej. rutas usadas durante CI/CD como
+    "../external-projects/<proyecto>/archivo.py") en vez de la ruta
+    real relativa a la raiz del proyecto en S3. Esto normaliza esos
+    prefijos comunes antes de consultar S3.
+    """
+    ruta_relativa = ruta_relativa.strip()
+    prefijos_a_quitar = [
+        f"../external-projects/{project_name}/",
+        f"external-projects/{project_name}/",
+        f"../monitored-systems/{project_name}/",
+        f"monitored-systems/{project_name}/",
+        f"{project_name}/",
+    ]
+    for prefijo in prefijos_a_quitar:
+        if ruta_relativa.startswith(prefijo):
+            ruta_relativa = ruta_relativa[len(prefijo):]
+            break
+    return ruta_relativa.lstrip("/")
+
+
 def leer_archivo(project_name: str, ruta_relativa: str) -> str:
     """
     Lee el contenido completo de un archivo del proyecto desde S3 (hasta
@@ -32,7 +55,7 @@ def leer_archivo(project_name: str, ruta_relativa: str) -> str:
     en cada push al repo del proyecto -- siempre refleja la version mas
     reciente, sin depender de que este empaquetado en el zip de Lambda.
     """
-    ruta_relativa = ruta_relativa.lstrip("/")
+    ruta_relativa = _normalizar_ruta(project_name, ruta_relativa)
     key = f"{_s3_source_prefix(project_name)}{ruta_relativa}"
 
     client = boto3.client("s3")
@@ -57,7 +80,7 @@ def listar_archivos(project_name: str, directorio_relativo: str = "") -> str:
     decidir que archivo leer, igual que un desarrollador nuevo
     explorando el repo por primera vez.
     """
-    directorio_relativo = directorio_relativo.strip("/")
+    directorio_relativo = _normalizar_ruta(project_name, directorio_relativo).strip("/")
     prefix = _s3_source_prefix(project_name)
     if directorio_relativo:
         prefix += directorio_relativo + "/"
@@ -97,6 +120,39 @@ def buscar_en_codigo(project_name: str, palabra_clave: str) -> str:
         return json.dumps(matches, ensure_ascii=False)
     except Exception as e:
         return f"Error buscando en la base de conocimiento: {e}"
+
+
+def consultar_logs_recientes(project_name: str, minutos_atras: int = 10, region: str = "us-east-1") -> str:
+    """
+    Consulta los logs REALES y ACTUALES de CloudWatch para el proyecto,
+    en una ventana de tiempo reciente -- distinto de los logs congelados
+    del momento del diagnostico original. Usar cuando el desarrollador
+    pregunte si un problema sigue ocurriendo, o quiera ver logs de un
+    momento mas reciente que el incidente original.
+    """
+    from adapters.cloudwatch_adapter import fetch_recent_logs
+    from core.registry import build_log_group_registry
+
+    registry = build_log_group_registry()
+    log_groups = [lg for lg, proj in registry.items() if proj == project_name]
+
+    if not log_groups:
+        return f"No se encontraron log groups registrados para el proyecto '{project_name}'."
+
+    all_results = []
+    for log_group in log_groups:
+        try:
+            result = fetch_recent_logs(log_group, region, minutes_back=minutos_atras)
+            messages = [e.message.strip() for e in result.events[-15:]]
+            all_results.append(
+                f"Log group {log_group} (ultimos {minutos_atras} min, "
+                f"{len(result.events)} eventos, error explicito={result.has_explicit_error}):\n"
+                + "\n".join(messages)
+            )
+        except Exception as e:
+            all_results.append(f"Error consultando {log_group}: {e}")
+
+    return "\n\n".join(all_results)
 
 
 def consultar_infraestructura(project_name: str, tag_key: str = "oncall-project", region: str = "us-east-1") -> str:

@@ -27,7 +27,7 @@ GROQ_PRICE_PER_MILLION_TOKENS = {
     "llama-3.3-70b-versatile": {"input": 0.59, "output": 0.79},
 }
 BEDROCK_PRICE_PER_MILLION_TOKENS = {
-    "anthropic.claude-3-5-sonnet-20241022-v2:0": {"input": 3.00, "output": 15.00},
+    "anthropic.claude-sonnet-5": {"input": 3.00, "output": 15.00},
 }
 
 SLACK_CHANNEL = "todo-oncall-agent-dev"

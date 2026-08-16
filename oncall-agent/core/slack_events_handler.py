@@ -27,13 +27,14 @@ from core.agent_tools import (
     listar_archivos,
     buscar_en_codigo,
     consultar_infraestructura,
+    consultar_logs_recientes,
 )
 
 load_dotenv()
 
 CONTEXT_TABLE_NAME = "oncall-agent-incident-context"
 BOT_USER_ID_CACHE = {}
-MAX_TOOL_ROUNDS = 4
+MAX_TOOL_ROUNDS = 8
 
 SYSTEM_PROMPT = """Eres un ingeniero SRE senior que ya diagnostico un \
 incidente de produccion y ahora conversa con un desarrollador en el \
@@ -46,6 +47,9 @@ Tienes herramientas para EXPLORAR ACTIVAMENTE el proyecto real:
 - leer_archivo: leer el contenido completo de un archivo especifico
 - buscar_en_codigo: buscar funciones por palabra clave en la base de conocimiento
 - consultar_infraestructura: ver configuracion real de AWS (Lambda, memoria, timeout, recursos etiquetados)
+- consultar_logs_recientes: ver logs REALES Y ACTUALES de CloudWatch (no los congelados del diagnostico original) -- usar SIEMPRE que el desarrollador pregunte si el problema "sigue pasando", "todavia falla", o pida el estado actual
+
+IMPORTANTE sobre rutas: las rutas de leer_archivo y listar_archivos son SIEMPRE relativas a la raiz del proyecto, sin ningun prefijo. Ejemplo CORRECTO: "app/api/routes.py". Ejemplos INCORRECTOS que NUNCA debes usar: "../external-projects/nombre-proyecto/app/api/routes.py", "monitored-systems/nombre-proyecto/app/api/routes.py". Si no sabes la ruta exacta de un archivo, usa listar_archivos primero para descubrirla (empezando con directorio_relativo vacio para ver la raiz), en vez de adivinar un prefijo.
 
 REGLAS DE COMPORTAMIENTO, OBLIGATORIAS:
 
@@ -120,6 +124,22 @@ TOOLS = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "consultar_logs_recientes",
+            "description": "Consulta los logs REALES y ACTUALES de CloudWatch (no los del momento del diagnostico original). Usar cuando el desarrollador pregunte si el problema sigue ocurriendo, o quiera ver el estado mas reciente.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "minutos_atras": {
+                        "type": "integer",
+                        "description": "Cuantos minutos hacia atras consultar. Por defecto 10.",
+                    }
+                },
+            },
+        },
+    },
 ]
 
 TOOL_FUNCTIONS = {
@@ -127,6 +147,7 @@ TOOL_FUNCTIONS = {
     "leer_archivo": leer_archivo,
     "buscar_en_codigo": buscar_en_codigo,
     "consultar_infraestructura": consultar_infraestructura,
+    "consultar_logs_recientes": consultar_logs_recientes,
 }
 
 
@@ -159,10 +180,61 @@ def _get_bot_user_id() -> str:
     return bot_id
 
 
+MAX_HISTORY_TURNS = 6  # se guardan los ultimos N pares pregunta/respuesta
+
+
 def _load_incident_context(thread_ts: str, region: str = "us-east-1") -> dict:
     table = boto3.resource("dynamodb", region_name=region).Table(CONTEXT_TABLE_NAME)
     response = table.get_item(Key={"thread_ts": thread_ts})
     return response.get("Item")
+
+
+def _load_conversation_history(context: dict) -> list:
+    raw = context.get("conversation_history", "[]")
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _looks_like_malformed_function_call(text: str) -> bool:
+    """
+    A veces el modelo genera texto que imita sintaxis de tool-calling
+    (ej. "<function>nombre{...}</function>") en vez de una respuesta de
+    chat normal o un tool_call estructurado real. Si esto se guarda en
+    el historial de conversacion, el modelo lo re-lee en la siguiente
+    pregunta y refuerza el mismo patron roto -- por eso nunca debe
+    persistirse como turno valido.
+    """
+    if not text:
+        return True
+    lowered = text.strip().lower()
+    return lowered.startswith("<function") or lowered.startswith("<function=")
+
+
+def _append_conversation_turn(thread_ts: str, context: dict, question: str, answer: str, region: str = "us-east-1") -> None:
+    """
+    Guarda el par pregunta/respuesta en el mismo registro del incidente,
+    reescribiendo el item completo (ya tenemos permiso PutItem sobre
+    esta tabla). Se recorta a los ultimos MAX_HISTORY_TURNS pares para
+    no inflar indefinidamente el tamaño del contexto ni el costo de
+    cada llamada futura a Groq. Nunca guarda respuestas que parezcan
+    llamadas a funcion malformadas -- eso contaminaria las siguientes
+    preguntas del mismo hilo.
+    """
+    if _looks_like_malformed_function_call(answer):
+        print("DEBUG: respuesta parece function-call malformada, NO se guarda en historial")
+        return
+
+    history = _load_conversation_history(context)
+    history.append({"role": "user", "content": question})
+    history.append({"role": "assistant", "content": answer})
+    history = history[-(MAX_HISTORY_TURNS * 2):]
+
+    context["conversation_history"] = json.dumps(history, ensure_ascii=False)
+
+    table = boto3.resource("dynamodb", region_name=region).Table(CONTEXT_TABLE_NAME)
+    table.put_item(Item=context)
 
 
 def _call_tool(project_name: str, tool_name: str, args: dict) -> str:
@@ -176,7 +248,7 @@ def _call_tool(project_name: str, tool_name: str, args: dict) -> str:
         return f"Error ejecutando {tool_name}: {e}"
 
 
-def _answer_question(context: dict, question: str, model: str = "llama-3.3-70b-versatile") -> str:
+def _answer_question(context: dict, question: str, thread_ts: str, model: str = "llama-3.3-70b-versatile") -> str:
     client = Groq(api_key=os.environ["GROQ_API_KEY"])
     project_name = context.get("project_name", "")
 
@@ -196,28 +268,68 @@ Postmortems similares encontrados:
 {context.get('similar_postmortems', '[]')}
 """
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Evidencia del incidente:\n{evidence}\n\nPregunta del desarrollador: {question}"},
-    ]
+    history = _load_conversation_history(context)
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    if history:
+        messages.append({
+            "role": "user",
+            "content": f"Evidencia del incidente:\n{evidence}\n\n(Este es el contexto inicial del incidente. A continuacion viene el historial de la conversacion ya sostenida en este hilo.)",
+        })
+        messages.append({"role": "assistant", "content": "Entendido, tengo el contexto del incidente."})
+        messages.extend(history)
+        messages.append({"role": "user", "content": question})
+    else:
+        messages.append({
+            "role": "user",
+            "content": f"Evidencia del incidente:\n{evidence}\n\nPregunta del desarrollador: {question}",
+        })
 
     for round_num in range(MAX_TOOL_ROUNDS):
         # En la primera ronda forzamos el uso de alguna herramienta --
         # la observacion real es que con tool_choice="auto" el modelo
         # a veces responde directo (inventando codigo) en preguntas
         # complejas de varias partes, en vez de explorar primero.
-        tool_choice = "required" if round_num == 0 else "auto"
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice=tool_choice,
-            temperature=0.2,
-        )
+        # tool_choice="required" en la primera ronda a veces hace que
+        # el modelo genere sintaxis de function-call malformada
+        # (tool_use_failed) de forma REPETIBLE, no aleatoria -- para el
+        # mismo prompt siempre falla igual. Reintentar con el mismo
+        # tool_choice no sirve; hay que cambiar la estrategia: probar
+        # "required" una vez, y si falla, caer a "auto" (que en la
+        # practica genera tool calls validas de forma mas confiable).
+        tool_choices_to_try = ["required", "auto"] if round_num == 0 else ["auto"]
+
+        response = None
+        for tool_choice in tool_choices_to_try:
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=TOOLS,
+                    tool_choice=tool_choice,
+                    temperature=0.2,
+                )
+                break
+            except Exception as e:
+                print(f"DEBUG: fallo generando tool call en ronda {round_num} con tool_choice={tool_choice}: {e}")
+
+        if response is None:
+            break
         message = response.choices[0].message
 
         if not message.tool_calls:
-            return message.content
+            answer = message.content
+            if _looks_like_malformed_function_call(answer):
+                print(f"DEBUG: respuesta final parece function-call malformada, reintentando en texto plano: {answer[:200]}")
+                messages.append({
+                    "role": "user",
+                    "content": "Tu respuesta anterior no fue texto valido. Responde SOLO en lenguaje natural, sin ningun formato de function-call ni etiquetas como <function>.",
+                })
+                retry_response = client.chat.completions.create(model=model, messages=messages, temperature=0.2)
+                answer = retry_response.choices[0].message.content
+            _append_conversation_turn(thread_ts, context, question, answer)
+            return answer
 
         messages.append(message)
         for tool_call in message.tool_calls:
@@ -230,8 +342,14 @@ Postmortems similares encontrados:
                 "content": result[:4000],
             })
 
+    messages.append({
+        "role": "user",
+        "content": "Ya no puedes usar mas herramientas. Responde ahora en texto normal, en lenguaje natural, con lo que ya encontraste -- no generes texto que parezca una llamada a funcion.",
+    })
     final_response = client.chat.completions.create(model=model, messages=messages, temperature=0.2)
-    return final_response.choices[0].message.content
+    answer = final_response.choices[0].message.content
+    _append_conversation_turn(thread_ts, context, question, answer)
+    return answer
 
 
 def _reply_in_thread(channel: str, thread_ts: str, text: str) -> None:
@@ -297,7 +415,7 @@ def lambda_handler(event, context):
     question = slack_event.get("text", "")
 
     try:
-        answer = _answer_question(incident_context, question)
+        answer = _answer_question(incident_context, question, thread_ts)
     except Exception as e:
         print(f"ERROR al generar respuesta: {e}")
         _reply_in_thread(
