@@ -128,7 +128,7 @@ llm:
     model: llama-3.3-70b-versatile
   escalation:
     provider: bedrock
-    model: anthropic.claude-3-5-sonnet-20241022-v2:0
+    model: anthropic.claude-sonnet-5
     region: us-east-1
 
 notifications:
