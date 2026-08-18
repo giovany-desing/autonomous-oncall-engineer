@@ -35,6 +35,7 @@ class DiagnosisState(TypedDict, total=False):
     hypotheses: list  # list[Hypothesis], rankeadas
     escalated_to_bedrock: bool
     escalation_reason: str
+    escalation_blocked_by_budget: bool  # True si el guardrail de gasto impidio una escalacion que si aplicaba
 
     # --- Producido por el nodo Validador ---
     similar_postmortems: list

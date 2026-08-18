@@ -17,6 +17,7 @@ import boto3
 from dotenv import load_dotenv
 from groq import Groq
 
+from budget.escalation_budget import check_and_increment_escalation_budget
 from core.config import ProjectConfig
 from core.state import DiagnosisState
 
@@ -135,6 +136,21 @@ def hypothesis_node(state: DiagnosisState, config: ProjectConfig) -> DiagnosisSt
     should_escalate, reason = _should_escalate(hypotheses, state)
 
     if should_escalate:
+        budget_result = check_and_increment_escalation_budget(config.aws_region)
+
+        if not budget_result.allowed:
+            print(
+                f"ADVERTENCIA: guardrail de gasto bloqueo una escalacion que si aplicaba "
+                f"(razon original: {reason}). Bucket {budget_result.hour_bucket} ya alcanzo el limite."
+            )
+            return {
+                "hypotheses": hypotheses,
+                "escalated_to_bedrock": False,
+                "escalation_reason": reason,
+                "escalation_blocked_by_budget": True,
+                "cost_breakdown": cost_breakdown,
+            }
+
         escalated_hypotheses, escalation_cost = _call_bedrock(
             SYSTEM_PROMPT, user_prompt, config.escalation_model, config.escalation_region
         )
@@ -145,6 +161,7 @@ def hypothesis_node(state: DiagnosisState, config: ProjectConfig) -> DiagnosisSt
             "hypotheses": escalated_hypotheses,
             "escalated_to_bedrock": True,
             "escalation_reason": reason,
+            "escalation_blocked_by_budget": False,
             "cost_breakdown": cost_breakdown,
         }
 
@@ -152,6 +169,7 @@ def hypothesis_node(state: DiagnosisState, config: ProjectConfig) -> DiagnosisSt
         "hypotheses": hypotheses,
         "escalated_to_bedrock": False,
         "escalation_reason": "",
+        "escalation_blocked_by_budget": False,
         "cost_breakdown": cost_breakdown,
     }
 

@@ -12,3 +12,4 @@ __pycache__/
 terraform.tfvars
 terraform.tfvars
 oncall-agent/manifests/*-lambda.yaml
+tfplan
