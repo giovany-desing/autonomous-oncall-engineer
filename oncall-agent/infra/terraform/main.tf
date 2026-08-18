@@ -104,6 +104,12 @@ resource "aws_iam_role_policy" "agent_lambda_permissions" {
         Resource = aws_dynamodb_table.cost_log.arn
       },
       {
+        Sid      = "DynamoDBEscalationBudget"
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem", "dynamodb:GetItem"]
+        Resource = aws_dynamodb_table.escalation_budget.arn
+      },
+      {
         Sid      = "S3Memory"
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject"]
@@ -391,6 +397,26 @@ resource "aws_dynamodb_table" "cost_log" {
 
   # Sin TTL a proposito: este es historico de costo que queremos
   # conservar para reportes FinOps, no datos efimeros de dedup.
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
+resource "aws_dynamodb_table" "escalation_budget" {
+  name         = "oncall-agent-escalation-budget"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "hour_bucket"
+
+  attribute {
+    name = "hour_bucket"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expires_at"
+    enabled        = true
+  }
 
   tags = {
     project = "oncall-agent"
