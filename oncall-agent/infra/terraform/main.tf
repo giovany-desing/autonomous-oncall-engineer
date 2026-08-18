@@ -98,6 +98,12 @@ resource "aws_iam_role_policy" "agent_lambda_permissions" {
         Resource = aws_dynamodb_table.incident_context.arn
       },
       {
+        Sid      = "DynamoDBCostLog"
+        Effect   = "Allow"
+        Action   = ["dynamodb:PutItem"]
+        Resource = aws_dynamodb_table.cost_log.arn
+      },
+      {
         Sid      = "S3Memory"
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject"]
@@ -216,6 +222,7 @@ resource "aws_iam_role_policy" "probe_s3_write" {
 resource "aws_scheduler_schedule" "synthetic_probe_schedule" {
   name       = "oncall-agent-probe-schedule"
   group_name = "default"
+  state      = "DISABLED" # Deshabilitada a proposito para no gastar Groq. Reactivar cuando se decida retomar la sonda.
 
   flexible_time_window {
     mode = "OFF"
@@ -364,8 +371,26 @@ resource "aws_dynamodb_table" "incident_context" {
 
   ttl {
     attribute_name = "expires_at"
-    enabled         = true
+    enabled        = true
   }
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
+resource "aws_dynamodb_table" "cost_log" {
+  name         = "oncall-agent-cost-log"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "incident_id"
+
+  attribute {
+    name = "incident_id"
+    type = "S"
+  }
+
+  # Sin TTL a proposito: este es historico de costo que queremos
+  # conservar para reportes FinOps, no datos efimeros de dedup.
 
   tags = {
     project = "oncall-agent"
@@ -388,8 +413,8 @@ resource "aws_lambda_function" "slack_events" {
 
   environment {
     variables = {
-      GROQ_API_KEY      = var.groq_api_key
-      SLACK_BOT_TOKEN   = var.slack_bot_token
+      GROQ_API_KEY         = var.groq_api_key
+      SLACK_BOT_TOKEN      = var.slack_bot_token
       SLACK_SIGNING_SECRET = var.slack_signing_secret
     }
   }
