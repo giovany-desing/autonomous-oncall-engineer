@@ -33,6 +33,7 @@ BEDROCK_PRICE_PER_MILLION_TOKENS = {
 SLACK_CHANNEL = "todo-oncall-agent-dev"
 CONTEXT_TABLE_NAME = "oncall-agent-incident-context"
 CONTEXT_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 dias
+COST_LOG_TABLE_NAME = "oncall-agent-cost-log"
 
 
 def _estimate_cost_usd(cost_breakdown: list) -> float:
@@ -122,10 +123,34 @@ def _save_incident_context(thread_ts: str, state: DiagnosisState, region: str) -
     )
 
 
+def _save_cost_log(state: DiagnosisState, cost_usd: float, region: str) -> None:
+    cost_breakdown = state.get("cost_breakdown", [])
+    models_used = sorted({entry.get("model", "") for entry in cost_breakdown if entry.get("model")})
+
+    table = boto3.resource("dynamodb", region_name=region).Table(COST_LOG_TABLE_NAME)
+    table.put_item(
+        Item={
+            "incident_id": state.get("incident_id", ""),
+            "project_name": state.get("project_name", ""),
+            "created_at": int(time.time()),
+            "cost_usd": str(cost_usd),
+            "escalated_to_bedrock": state.get("escalated_to_bedrock", False),
+            "confidence_level": state.get("confidence_level", ""),
+            "models_used": models_used,
+        }
+    )
+
+
 def communicator_node(state: DiagnosisState, config: ProjectConfig, send: bool = True) -> DiagnosisState:
     message = _format_message(state)
     notification_sent = False
     thread_ts = None
+    cost_usd = _estimate_cost_usd(state.get("cost_breakdown", []))
+
+    try:
+        _save_cost_log(state, cost_usd, config.aws_region)
+    except Exception as e:
+        print(f"ADVERTENCIA: no se pudo guardar el registro de costo: {e}")
 
     if send:
         slack_response = _post_to_slack(message)
