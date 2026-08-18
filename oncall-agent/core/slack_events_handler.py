@@ -248,7 +248,7 @@ def _call_tool(project_name: str, tool_name: str, args: dict) -> str:
         return f"Error ejecutando {tool_name}: {e}"
 
 
-def _answer_question(context: dict, question: str, thread_ts: str, model: str = "llama-3.3-70b-versatile") -> str:
+def _answer_question(context: dict, question: str, thread_ts: str, model: str = "openai/gpt-oss-120b") -> str:
     client = Groq(api_key=os.environ["GROQ_API_KEY"])
     project_name = context.get("project_name", "")
 

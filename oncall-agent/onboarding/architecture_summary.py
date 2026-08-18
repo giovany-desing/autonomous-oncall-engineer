@@ -93,7 +93,7 @@ Total de funciones catalogadas: {len(all_functions)}
 
 def generate_architecture_summary(
     project_root: Path,
-    model: str = "llama-3.3-70b-versatile",
+    model: str = "openai/gpt-oss-120b",
     extra_context: str = "",
 ) -> dict:
     readme = _read_readme(project_root)

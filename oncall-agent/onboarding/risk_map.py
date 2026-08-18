@@ -19,7 +19,7 @@ from dataclasses import asdict
 
 def build_knowledge_base(
     project_root: Path,
-    model: str = "llama-3.3-70b-versatile",
+    model: str = "openai/gpt-oss-120b",
     extra_context: str = "",
 ) -> dict:
     scan_results = scan_directory(project_root)

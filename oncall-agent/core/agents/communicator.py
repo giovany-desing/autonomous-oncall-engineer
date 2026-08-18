@@ -24,7 +24,7 @@ from core.state import DiagnosisState
 load_dotenv()
 
 GROQ_PRICE_PER_MILLION_TOKENS = {
-    "llama-3.3-70b-versatile": {"input": 0.59, "output": 0.79},
+    "openai/gpt-oss-120b": {"input": 0.15, "output": 0.60},
 }
 BEDROCK_PRICE_PER_MILLION_TOKENS = {
     "anthropic.claude-sonnet-5": {"input": 3.00, "output": 15.00},
