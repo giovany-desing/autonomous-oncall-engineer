@@ -10,3 +10,4 @@ requests==2.34.2
 pypdf==5.1.0
 pytest==8.3.4
 pytest-mock==3.14.0
+fastembed==0.4.2

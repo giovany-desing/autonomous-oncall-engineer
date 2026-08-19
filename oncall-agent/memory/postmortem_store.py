@@ -6,11 +6,19 @@ de Lambda, donde el sistema de archivos es efímero.
 """
 import json
 import math
+import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
 import boto3
 from botocore.exceptions import ClientError
+
+EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+EMBEDDING_MODEL_S3_PREFIX = "models/models--qdrant--paraphrase-multilingual-MiniLM-L12-v2-onnx-Q"
+EMBEDDING_MODEL_S3_BUCKET = "oncall-agent-memory-531728396479"
+EMBEDDING_MODEL_CACHE_DIR = "/tmp/fastembed_cache"
+
+_embedding_model_instance = None  # cache global del proceso: persiste entre invocaciones "warm"
 
 
 @dataclass
@@ -44,20 +52,54 @@ def _cosine_similarity(a: list, b: list) -> float:
     return dot / (norm_a * norm_b)
 
 
-def _embed_text(text: str) -> list:
+def _ensure_embedding_model_downloaded(s3_client=None) -> None:
     """
-    Placeholder de embeddings: Groq no ofrece endpoint de embeddings.
-    Usamos un hash determinístico de n-gramas como stand-in barato hasta
-    decidir el proveedor real de embeddings (ej. AWS Bedrock Titan Embeddings).
-    NO usar en producción — deuda técnica ya anotada previamente.
+    Descarga el modelo de embeddings (ONNX, ~235MB) desde S3 a /tmp una sola
+    vez por contenedor Lambda. Un archivo marcador evita re-descargar en
+    invocaciones "warm" que reutilizan el mismo contenedor.
     """
-    import hashlib
-    vector = []
-    words = text.lower().split()
-    for i in range(64):
-        h = hashlib.md5(f"{i}:{' '.join(words)}".encode()).hexdigest()
-        vector.append(int(h[:8], 16) / 0xFFFFFFFF)
-    return vector
+    marker_path = f"{EMBEDDING_MODEL_CACHE_DIR}/.download_complete"
+    if os.path.exists(marker_path):
+        return
+
+    client = s3_client or boto3.client("s3")
+    paginator = client.get_paginator("list_objects_v2")
+    downloaded_any = False
+
+    for page in paginator.paginate(Bucket=EMBEDDING_MODEL_S3_BUCKET, Prefix=EMBEDDING_MODEL_S3_PREFIX):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            local_path = os.path.join(EMBEDDING_MODEL_CACHE_DIR, key[len("models/"):])
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            client.download_file(EMBEDDING_MODEL_S3_BUCKET, key, local_path)
+            downloaded_any = True
+
+    assert downloaded_any, (
+        f"No se encontro ningun archivo en s3://{EMBEDDING_MODEL_S3_BUCKET}/{EMBEDDING_MODEL_S3_PREFIX} "
+        f"-- verificar que el modelo se subio correctamente."
+    )
+
+    os.makedirs(EMBEDDING_MODEL_CACHE_DIR, exist_ok=True)
+    with open(marker_path, "w") as f:
+        f.write("ok")
+
+
+def _get_embedding_model(s3_client=None):
+    global _embedding_model_instance
+    if _embedding_model_instance is None:
+        _ensure_embedding_model_downloaded(s3_client=s3_client)
+        from fastembed import TextEmbedding
+        _embedding_model_instance = TextEmbedding(
+            model_name=EMBEDDING_MODEL_NAME,
+            cache_dir=EMBEDDING_MODEL_CACHE_DIR,
+        )
+    return _embedding_model_instance
+
+
+def _embed_text(text: str, s3_client=None) -> list:
+    model = _get_embedding_model(s3_client=s3_client)
+    embedding = next(model.embed([text]))
+    return embedding.tolist()
 
 
 def load_postmortems(s3_uri: str, s3_client=None) -> list:
