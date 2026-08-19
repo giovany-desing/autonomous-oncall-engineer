@@ -150,7 +150,11 @@ resource "aws_lambda_function" "agent" {
   role          = aws_iam_role.agent_lambda_role.arn
   architectures = ["arm64"]
   timeout       = 90
-  memory_size   = 512
+  memory_size   = 1536
+
+  ephemeral_storage {
+    size = 1024
+  }
 
   s3_bucket = aws_s3_bucket.lambda_deployments.id
   s3_key    = "agent.zip"
