@@ -8,6 +8,7 @@ on:
       - 'monitored-systems/rag-demo/**'
   repository_dispatch:
     types: [project_updated]
+  workflow_dispatch: {}
 
 jobs:
   rebuild-and-deploy:
