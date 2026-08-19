@@ -96,10 +96,14 @@ jobs:
           mkdir -p /tmp/build/all-knowledge-bases
           aws s3 sync s3://oncall-agent-memory-531728396479/knowledge-bases/ /tmp/build/all-knowledge-bases/
 
-      - name: Instalar dependencias de Lambda (sin boto3/botocore)
+      - name: Instalar dependencias de Lambda (sin boto3/botocore/tree-sitter)
         run: |
           mkdir -p /tmp/build/package
-          grep -v -E "^(boto3|botocore)" oncall-agent/requirements.txt > /tmp/requirements-lambda.txt
+          # tree-sitter y tree-sitter-language-pack se excluyen: solo los usa
+          # onboarding/ (corre en este runner de CI, nunca dentro de la Lambda
+          # desplegada). Confirmado por grep -- pesan 156MB, la mayor parte
+          # del paquete, sin aportar nada en runtime.
+          grep -v -E "^(boto3|botocore|tree-sitter)" oncall-agent/requirements.txt > /tmp/requirements-lambda.txt
           pip install \
             -r /tmp/requirements-lambda.txt \
             --target /tmp/build/package \
@@ -108,6 +112,18 @@ jobs:
             --python-version 3.12 \
             --only-binary=:all: \
             --upgrade
+
+          # Limpieza de contenido que nunca se ejecuta en runtime, para
+          # quedar bajo el limite de 262144000 bytes (250MB) sin comprimir
+          # de Lambda. Sin este paso el paquete pesaba ~342MB.
+          find /tmp/build/package -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          # Fixtures de test que trae empaquetado el propio paquete onnx
+          # (no codigo tuyo, no se importa nunca). Especifico a la
+          # estructura interna de esta version de onnx -- si onnx cambia
+          # de layout en una actualizacion futura, este rm deja de tener
+          # efecto silenciosamente (el paquete simplemente volveria a
+          # crecer, sin romper nada).
+          rm -rf /tmp/build/package/onnx/backend/test
 
       - name: Copiar codigo fuente del agente al paquete
         run: |
