@@ -1,0 +1,28 @@
+FROM public.ecr.aws/lambda/python:3.12
+
+# Fix para el crash conocido de onnxruntime/cpuinfo en AWS Lambda:
+# cpuinfo intenta leer /sys/devices/system/cpu/{possible,present} para
+# detectar el CPU, pero Lambda no expone esos archivos -> cpuinfo falla
+# -> onnxruntime lanza una excepcion C++ no capturada antes de registrar
+# su logger -> el runtime aborta con "signal: aborted". El parche se
+# aplica en docker/entrypoint.sh (tiempo de ejecucion), no aqui --
+# /sys en tiempo de build es el filesystem real del host, de solo
+# lectura.
+# Fuente: https://github.com/DiscreteTom/onnx-on-aws-lambda-arm64
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
+# tree-sitter/tree-sitter-language-pack se excluyen: solo los usa
+# onboarding/, que corre en GitHub Actions, nunca dentro de la Lambda.
+COPY docker/requirements-lambda-docker.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+RUN pip install -r ${LAMBDA_TASK_ROOT}/requirements.txt --target ${LAMBDA_TASK_ROOT} --upgrade
+
+COPY core/ ${LAMBDA_TASK_ROOT}/core/
+COPY adapters/ ${LAMBDA_TASK_ROOT}/adapters/
+COPY budget/ ${LAMBDA_TASK_ROOT}/budget/
+COPY memory/ ${LAMBDA_TASK_ROOT}/memory/
+COPY dedup/ ${LAMBDA_TASK_ROOT}/dedup/
+COPY probes/ ${LAMBDA_TASK_ROOT}/probes/
+
+CMD ["core.lambda_handler.lambda_handler"]

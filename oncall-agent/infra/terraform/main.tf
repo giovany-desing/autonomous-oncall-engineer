@@ -143,6 +143,15 @@ resource "aws_iam_role_policy" "agent_lambda_permissions" {
   })
 }
 
+resource "aws_ecr_repository" "agent" {
+  name                 = "oncall-agent"
+  image_tag_mutability = "MUTABLE"
+
+  tags = {
+    project = "oncall-agent"
+  }
+}
+
 resource "aws_lambda_function" "agent" {
   function_name = "oncall-agent-diagnosis"
   runtime       = "python3.12"
